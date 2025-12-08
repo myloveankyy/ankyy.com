@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+build/
+dist/
+
+# Environment variables (Secrets)
+.env
+.env.local
+
+# Backend specific
+backend/downloads/
+backend/yt-dlp.exe
+backend/db.json
+backend/mongodb_data/
+backend/uploads/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log
+yarn-error.log
