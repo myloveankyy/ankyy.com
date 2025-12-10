@@ -332,6 +332,61 @@ The entire Media Empire system is fully functional on localhost. The three appli
 Next Steps:
 The system is ready for Phase 7: Deployment. The next session will focus on making the entire ankyy.com ecosystem live on a DigitalOcean Droplet, configuring NGINX for domain routing, and ensuring the backend runs continuously with pm2.
 
+SESSION LOG: Tuesday, December 9, 2025 (The Deployment & Infrastructure)
+Goal: Move the local "Media Empire" (MusicBox + Admin + Blog) to a live production server on DigitalOcean, secure it with SSL, and bypass YouTube's server-side blocking.
+Outcome:
+The system is now LIVE at https://ankyy.com.
+The transition from Localhost to Production was complex but successful. We encountered and solved critical infrastructure challenges including RAM limits, Reverse Proxy routing, and Bot Detection.
+1. Infrastructure Setup
+Server: DigitalOcean Droplet (Ubuntu 22.04 LTS).
+Specs: Upgraded to 2GB RAM / 1 CPU (Initial 1GB plan caused build failures).
+Domain: ankyy.com (Managed via GoDaddy DNS, pointed via A Record).
+Stack: Node.js v18, Nginx (Reverse Proxy), MongoDB (Local), PM2 (Process Manager).
+2. Critical Challenges & Solutions
+The "1GB Trap" (RAM Limit):
+Issue: npm run build failed on the server due to insufficient memory.
+Fix: Created a 2GB Swap File (Virtual RAM) and vertically scaled the Droplet to 2GB physical RAM.
+The "White Screen" (Admin Routing):
+Issue: Admin panel loaded a blank screen because it didn't know it lived inside /admin.
+Fix: Added "homepage": "/admin" to admin/package.json and updated Nginx try_files to look in the correct build folder.
+The "Bot" Block (YouTube vs Server IP):
+Issue: YouTube blocked the DigitalOcean IP with "Sign in to confirm you're not a bot".
+Fix: Implemented the Cookie Passport System. Extracted cookies.txt from a real browser and integrated it into server.js so the server mimics a logged-in human user.
+OS Compatibility:
+Issue: Code was trying to run yt-dlp.exe (Windows) on Linux.
+Fix: Refactored server.js to use the Linux binary (./yt-dlp) and updated file permissions (chmod +x).
+3. Files Created & Modified (Production Versions)
+A. /etc/nginx/sites-available/default (The Traffic Controller)
+Action: Completely rewrote Nginx config to handle three distinct zones.
+Logic:
+/ → Serves Frontend React Build.
+/admin → Serves Admin React Build.
+/api & /socket.io → Proxies to Node.js Backend (Port 5000).
+B. backend/server.js (The Engine)
+Action: Major refactor for Live Environment.
+Changes:
+Paths: Switched from yt-dlp.exe to ./yt-dlp.
+Security: Added https://ankyy.com to CORS ALLOWED_ORIGINS.
+Cookies: Added --cookies cookies.txt to yt-dlp arguments to bypass bot detection.
+Dynamic Origins: Socket.io now accepts connections from the production domain.
+C. admin/src/App.js (The Dashboard)
+Action: Updated API connection logic.
+Change: Implemented dynamic SOCKET_URL detection.
+Logic: const SOCKET_URL = isLocal ? 'http://localhost:5000' : '/'; (Uses relative path on live server to avoid CORS/SSL mismatch).
+D. admin/package.json
+Action: Configuration update.
+Change: Added "homepage": "/admin" to ensure assets load correctly from the subfolder.
+E. backend/cookies.txt (New File)
+Action: Uploaded physical Netscape-format cookies file to authenticate server requests with YouTube.
+4. System Status (Current)
+Frontend: ✅ Live (SSL Secured).
+Admin Panel: ✅ Live (Connected to backend via WSS).
+Conversion Engine: ✅ Operational (Cookies bypass active).
+Database: ✅ MongoDB running locally on server.
+Next Steps:
+Monitor disk usage (ensure downloads folder auto-cleans).
+Begin SEO content strategy using the new Blog CMS.
+
 6. Instructions for AI Assistant
 
 Your workflow is strict:
@@ -351,6 +406,30 @@ Focus on local development first, then DigitalOcean deployment.
 7. 📂 Folder Structure (excluding node_modules):
 
 Ankyy.com
+├── .gitignore
+├── admin
+│   ├── .gitignore
+│   ├── README.md
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── public
+│   │   ├── favicon.ico
+│   │   ├── index.html
+│   │   ├── logo192.png
+│   │   ├── logo512.png
+│   │   ├── manifest.json
+│   │   └── robots.txt
+│   ├── src
+│   │   ├── App.css
+│   │   ├── App.js
+│   │   ├── App.test.js
+│   │   ├── index.css
+│   │   ├── index.js
+│   │   ├── logo.svg
+│   │   ├── reportWebVitals.js
+│   │   └── setupTests.js
+│   └── tailwind.config.js
 ├── backend
 │   ├── 1765165812362-player-script.js
 │   ├── 1765165812372-player-script.js
@@ -360,15 +439,18 @@ Ankyy.com
 │   ├── 1765165865288-player-script.js
 │   ├── 1765165868694-player-script.js
 │   ├── 1765165868708-player-script.js
-│   ├── db.json
+│   ├── db.json.migrated
 │   ├── downloads
+│   │   ├── Finding Her Female Version  Tanishka Bahl  Kushagra  Bharath  Saaheal  UR Debut  New Songs.mp3
 │   │   ├── Kiliye Kiliye - Video Song  Lokah Chapter 1 Chandra  Kalyani Priyadarshan  Naslen  Dominic Arun-720.mp4
-│   │   ├── Kiliye Kiliye - Video Song  Lokah Chapter 1 Chandra  Kalyani Priyadarshan  Naslen  Dominic Arun.mp3
-│   │   ├── Paresh Pahuja - Dooron Dooron Live from The Voice Notes Concert.mp3
-│   │   └── Tere Ishk Mein Song  Dhanush Kriti S  AR Rahman Arijit Singh Irshad K  Aanand LR  Bhushan K.mp3
+│   │   └── Kiliye Kiliye - Video Song  Lokah Chapter 1 Chandra  Kalyani Priyadarshan  Naslen  Dominic Arun.mp3
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── server.js
+│   ├── uploads
+│   │   ├── 1765192911043-366331172.webp
+│   │   ├── 1765196361247-202327027.webp
+│   │   └── 1765197328467-251916112.webp
 │   └── yt-dlp.exe
 ├── docs
 │   ├── project-journal.md
@@ -403,11 +485,14 @@ Ankyy.com
     │   ├── index.js
     │   ├── logo.svg
     │   ├── pages
+    │   │   ├── Article.js
+    │   │   ├── BlogFeed.js
     │   │   ├── HomePage.js
     │   │   └── MusicBoxPage.js
     │   ├── reportWebVitals.js
     │   └── setupTests.js
     └── tailwind.config.js
+
 
 8. Next Step for Development
 

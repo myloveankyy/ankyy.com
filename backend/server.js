@@ -1,4 +1,4 @@
-/* --- backend/server.js (Updated with Slug Fix) --- */
+/* --- backend/server.js (The Universal Engine) --- */
 
 const express = require('express');
 const cors = require('cors');
@@ -12,29 +12,44 @@ const ffmpegPath = require('ffmpeg-static');
 const archiver = require('archiver');
 const multer = require('multer');
 
+// --- ENVIRONMENT DETECTION ---
+// Check if we are running on Windows or Linux
+const IS_WINDOWS = process.platform === 'win32';
+const BINARY_NAME = IS_WINDOWS ? 'yt-dlp.exe' : 'yt-dlp';
+
 // --- CONFIGURATION ---
-const PORT = 5000;
-const MONGO_URI = 'mongodb://127.0.0.1:27017/musicbox'; 
+const PORT = process.env.PORT || 5000;
+// Use Environment Variable for DB or fallback to local
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/musicbox'; 
 
 // --- APP & SERVER SETUP ---
 const app = express();
 const server = http.createServer(app); 
 
+// Allow connections from Localhost OR the Live Domain
+const ALLOWED_ORIGINS = [
+    "http://localhost:3000", 
+    "http://localhost:3001",
+    "https://ankyy.com",
+    "https://admin.ankyy.com"
+];
+
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:3000", "http://localhost:3001"],
+        origin: ALLOWED_ORIGINS,
         methods: ["GET", "POST"]
     }
 });
 
-app.use(cors({ origin: ["http://localhost:3000", "http://localhost:3001"] }));
-app.use(express.json({ limit: '50mb' })); // Limit increased for Blog Content
+app.use(cors({ origin: ALLOWED_ORIGINS }));
+app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- STATIC PATHS ---
 const downloadDir = path.join(__dirname, 'downloads');
 const uploadDir = path.join(__dirname, 'uploads');
 
+// Ensure folders exist on startup
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir);
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
@@ -51,12 +66,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- MONGODB CONNECTION & SCHEMAS ---
+// --- MONGODB CONNECTION ---
 mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ MongoDB Connected'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// 1. MusicBox File Schema
+// --- SCHEMAS ---
 const FileSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
     title: String,
@@ -71,7 +86,6 @@ const FileSchema = new mongoose.Schema({
     downloadDuration: Number
 });
 
-// 2. Blog Schema
 const BlogSchema = new mongoose.Schema({
     slug: { type: String, unique: true, required: true, index: true },
     title: { type: String, required: true },
@@ -87,92 +101,45 @@ const BlogSchema = new mongoose.Schema({
 const FileModel = mongoose.model('File', FileSchema);
 const BlogModel = mongoose.model('Blog', BlogSchema);
 
-// --- MIGRATION SYSTEM ---
-const dbPath = path.join(__dirname, 'db.json');
-const migrateOldData = async () => {
-    if (fs.existsSync(dbPath)) {
-        console.log('📦 Found db.json. Checking migration...');
-        try {
-            const oldData = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-            for (const record of oldData) {
-                const exists = await FileModel.findOne({ id: record.id });
-                if (!exists) {
-                    await new FileModel({
-                        id: record.id,
-                        title: record.title,
-                        filename: record.filename,
-                        type: record.type || 'mp3',
-                        quality: record.quality || 'HQ',
-                        effect: record.effect || 'none',
-                        thumbnail: record.thumbnail,
-                        date: new Date(),
-                        size: record.size,
-                        status: 'Success'
-                    }).save();
-                }
-            }
-        } catch (e) { console.error('Migration Failed:', e); }
-    }
-};
-migrateOldData();
-
-// --- SOCKET.IO EVENTS ---
-io.on('connection', (socket) => {
-    const origin = socket.handshake.headers.origin;
-    if(origin && origin.includes('3001')) {
-        socket.join('admin_room'); 
-    }
-    emitStats();
-});
-
-const emitStats = async () => {
-    try {
-        const totalFiles = await FileModel.countDocuments();
-        const totalViewsAgg = await BlogModel.aggregate([{ $group: { _id: null, total: { $sum: "$views" } } }]);
-        const totalViews = totalViewsAgg[0]?.total || 0;
-        const recent = await FileModel.find().sort({ date: -1 }).limit(10);
-        
-        let totalSizeMB = 0;
-        const allFiles = await FileModel.find();
-        allFiles.forEach(f => {
-            totalSizeMB += parseFloat(f.size || 0);
-        });
-
-        io.to('admin_room').emit('stats_update', {
-            totalFiles,
-            storageUsage: totalSizeMB.toFixed(1),
-            blogViews: totalViews,
-            recentActivity: recent
-        });
-    } catch(e) {}
-};
-
 // --- HELPER: CLEAN SLUG ---
 const cleanSlug = (text) => {
     if (!text) return '';
     return text.toString().toLowerCase()
         .trim()
-        .replace(/[\s\W-]+/g, '-') // Replace spaces and special chars with hyphens
-        .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+        .replace(/[\s\W-]+/g, '-') 
+        .replace(/^-+|-+$/g, ''); 
 };
 
-// --- CORE ENGINE SETUP ---
+// --- CORE ENGINE SETUP (THE FIX) ---
 process.on('uncaughtException', (err) => console.error('CRITICAL ERROR:', err));
 process.on('unhandledRejection', (r, p) => console.error('Unhandled Rejection:', p, r));
 
-const binaryPath = path.join(__dirname, 'yt-dlp.exe');
+// Define path based on OS
+const binaryPath = path.join(__dirname, BINARY_NAME);
 let ytDlpWrap;
-if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir);
 
 const ensureBinaryExists = async () => {
+    // If binary missing, download it
     if (!fs.existsSync(binaryPath)) {
-        try { await YTDlpWrap.downloadFromGithub(binaryPath); } catch (err) {}
+        console.log(`⏳ Downloading ${BINARY_NAME}...`);
+        try { 
+            await YTDlpWrap.downloadFromGithub(binaryPath); 
+            console.log(`✅ ${BINARY_NAME} Downloaded.`);
+            
+            // IF LINUX: We must give it permission to execute
+            if (!IS_WINDOWS) {
+                fs.chmodSync(binaryPath, '755');
+                console.log('✅ Permissions set for Linux binary.');
+            }
+        } catch (err) {
+            console.error('❌ Failed to download binary:', err);
+        }
     }
     ytDlpWrap = new YTDlpWrap(binaryPath);
 };
 ensureBinaryExists();
 
-// --- DOWNLOAD QUEUE ---
+// --- QUEUE SYSTEM ---
 class DownloadQueue {
     constructor(concurrency = 2) { 
         this.queue = [];
@@ -201,40 +168,66 @@ class DownloadQueue {
 }
 const queue = new DownloadQueue(2);
 
+// --- SOCKET.IO ---
+io.on('connection', (socket) => {
+    const origin = socket.handshake.headers.origin;
+    // Allow admin from localhost OR production domain
+    if(origin && (origin.includes('3001') || origin.includes('admin.ankyy.com'))) {
+        socket.join('admin_room'); 
+    }
+    emitStats();
+});
+
+const emitStats = async () => {
+    try {
+        const totalFiles = await FileModel.countDocuments();
+        const totalViewsAgg = await BlogModel.aggregate([{ $group: { _id: null, total: { $sum: "$views" } } }]);
+        const totalViews = totalViewsAgg[0]?.total || 0;
+        const recent = await FileModel.find().sort({ date: -1 }).limit(10);
+        
+        let totalSizeMB = 0;
+        const allFiles = await FileModel.find();
+        allFiles.forEach(f => {
+            totalSizeMB += parseFloat(f.size || 0);
+        });
+
+        io.to('admin_room').emit('stats_update', {
+            totalFiles,
+            storageUsage: totalSizeMB.toFixed(1),
+            blogViews: totalViews,
+            recentActivity: recent
+        });
+    } catch(e) {}
+};
 
 // ======================================================
-// NEW CMS ROUTES (WORDPRESS STYLE + SLUG FIX)
+// API ROUTES
 // ======================================================
 
-// 1. UPLOAD IMAGE
+// Upload Image
 app.post('/api/upload', upload.single('image'), (req, res) => {
     if(!req.file) return res.status(400).json({ success: false });
-    const imageUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+    // Return relative path so it works on both Local and Prod
+    const imageUrl = `/uploads/${req.file.filename}`;
     res.json({ success: true, url: imageUrl });
 });
 
-// 2. SAVE POST (CREATE OR UPDATE)
+// Save Blog Post
 app.post('/api/blog', async (req, res) => {
     try {
         const { _id, title, content, slug, tags, excerpt, status, featuredImage } = req.body;
-        
-        // --- FORCE CLEAN SLUG ---
-        // If slug exists, clean it. If not, generate from title. Fallback to timestamp.
         let finalSlug = cleanSlug(slug || title);
         if (!finalSlug) finalSlug = `post-${Date.now()}`;
 
         let post;
         if (_id) {
-            // Update Existing
             post = await BlogModel.findByIdAndUpdate(_id, {
                 title, content, slug: finalSlug, tags, excerpt, status, featuredImage, date: new Date()
             }, { new: true });
         } else {
-            // Create New
             post = new BlogModel({ title, content, slug: finalSlug, tags, excerpt, status, featuredImage });
             await post.save();
         }
-        
         io.to('admin_room').emit('log', { message: `Post Saved: ${title}`, type: 'success' });
         emitStats();
         res.json({ success: true, data: post });
@@ -244,7 +237,7 @@ app.post('/api/blog', async (req, res) => {
     }
 });
 
-// 3. GET ALL POSTS
+// Get All Posts
 app.get('/api/blog', async (req, res) => {
     try {
         const posts = await BlogModel.find().sort({ date: -1 });
@@ -252,18 +245,14 @@ app.get('/api/blog', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// 4. GET SINGLE POST (With Recovery Logic)
+// Get Single Post
 app.get('/api/blog/:slug', async (req, res) => {
     try {
-        // Try exact match first
         let post = await BlogModel.findOne({ slug: req.params.slug });
-        
-        // If not found, try cleaning the incoming slug and searching again
         if (!post) {
             const cleaned = cleanSlug(req.params.slug);
             post = await BlogModel.findOne({ slug: cleaned });
         }
-
         if(post) {
             post.views += 1;
             await post.save();
@@ -274,7 +263,7 @@ app.get('/api/blog/:slug', async (req, res) => {
     } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// 5. DELETE POST
+// Delete Post
 app.delete('/api/blog/:id', async (req, res) => {
     try {
         await BlogModel.findByIdAndDelete(req.params.id);
@@ -283,11 +272,7 @@ app.delete('/api/blog/:id', async (req, res) => {
     } catch(e) { res.status(500).json({ success: false }); }
 });
 
-
-// ======================================================
-// EXISTING MUSICBOX ROUTES (PRESERVED)
-// ======================================================
-
+// Get History
 app.get('/api/history', async (req, res) => {
     try {
         let history = await FileModel.find().sort({ date: -1 });
@@ -297,12 +282,10 @@ app.get('/api/history', async (req, res) => {
         });
         const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(1);
         res.json({ success: true, data: history, storage: totalSizeMB });
-    } catch (e) { 
-        console.error(e);
-        res.status(500).json({ success: false }); 
-    }
+    } catch (e) { res.status(500).json({ success: false }); }
 });
 
+// Get Playlist Meta
 app.post('/api/playlist', async (req, res) => {
     if (!ytDlpWrap) return res.status(503).json({ success: false, message: "Initializing..." });
     const { url } = req.body;
@@ -318,6 +301,7 @@ app.post('/api/playlist', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
+// CONVERT API
 app.post('/api/convert', (req, res) => {
     if (!ytDlpWrap) return res.status(503).json({ success: false, message: "Initializing..." });
     const { url, type, quality = 'max', effect = 'none' } = req.body;
@@ -325,8 +309,8 @@ app.post('/api/convert', (req, res) => {
     const downloadTask = async () => {
         const startTime = Date.now();
         try {
-            console.log(`[Start] ${url} (${type} | ${quality} | ${effect})`);
-            io.to('admin_room').emit('log', { message: `Started: ${url} [${type}/${effect}]`, type: 'info' });
+            console.log(`[Start] ${url}`);
+            io.to('admin_room').emit('log', { message: `Started: ${url}`, type: 'info' });
 
             const metadataJSON = await ytDlpWrap.execPromise([url, '--dump-json', '--no-playlist', '--no-warnings']);
             const meta = JSON.parse(metadataJSON);
@@ -339,7 +323,12 @@ app.post('/api/convert', (req, res) => {
             const filename = `${cleanTitle}${suffix}.${type}`;
             const outputTemplate = path.join(downloadDir, `${cleanTitle}${suffix}.%(ext)s`);
 
+            // COOKIES: If cookies.txt exists, use it
             let args = [url, '-o', outputTemplate, '--no-playlist', '--force-overwrites', '--ffmpeg-location', ffmpegPath, '--add-metadata', '--embed-thumbnail'];
+            
+            if (fs.existsSync(path.join(__dirname, 'cookies.txt'))) {
+                args.push('--cookies', path.join(__dirname, 'cookies.txt'));
+            }
 
             let audioFilters = [];
             if (effect === 'slowed') audioFilters.push("asetrate=44100*0.88,atempo=1.0,aecho=0.8:0.9:1000:0.3");
@@ -366,12 +355,12 @@ app.post('/api/convert', (req, res) => {
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
             const record = {
-                id: Date.now(), title: cleanTitle, filename: filename, type: type, quality: type === 'mp4' ? quality : 'HQ',
+                id: Date.now(), title: cleanTitle, filename: filename, type: type, quality: quality,
                 effect: effect, thumbnail: meta.thumbnail, date: new Date(), size: sizeMB, status: 'Success', downloadDuration: duration
             };
             
             await new FileModel(record).save();
-            io.to('admin_room').emit('log', { message: `Finished: ${cleanTitle} (${sizeMB}MB)`, type: 'success' });
+            io.to('admin_room').emit('log', { message: `Finished: ${cleanTitle}`, type: 'success' });
             emitStats();
 
             if (!res.headersSent) res.json({ success: true, data: record });
@@ -385,22 +374,22 @@ app.post('/api/convert', (req, res) => {
     queue.add(downloadTask);
 });
 
+// Delete File
 app.delete('/api/files/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
     try {
-        const fileRecord = await FileModel.findOne({ id: id });
+        const fileRecord = await FileModel.findOne({ id: parseInt(req.params.id) });
         if (!fileRecord) return res.status(404).json({ success: false });
 
         const filePath = path.join(downloadDir, fileRecord.filename);
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         
-        await FileModel.deleteOne({ id: id });
-        io.to('admin_room').emit('log', { message: `Deleted: ${fileRecord.filename}`, type: 'warn' });
+        await FileModel.deleteOne({ id: parseInt(req.params.id) });
         emitStats();
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// Zip Download
 app.post('/api/zip', async (req, res) => {
     const { fileIds } = req.body;
     const filesToZip = await FileModel.find({ id: { $in: fileIds } });

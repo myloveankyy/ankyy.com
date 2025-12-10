@@ -1,25 +1,23 @@
 # Dependencies
-node_modules/
+node_modules
+package-lock.json
 
-# Build outputs
-build/
-dist/
-
-# Environment variables (Secrets)
+# Environment
 .env
-.env.local
 
-# Backend specific
-backend/downloads/
+# Downloads & Uploads (We don't want to sync music files to Github)
+backend/downloads
+backend/uploads
+
+# Binaries (Code should download these, not Git)
+*.exe
+backend/yt-dlp
 backend/yt-dlp.exe
-backend/db.json
-backend/mongodb_data/
-backend/uploads/
 
 # OS generated files
 .DS_Store
 Thumbs.db
 
-# Logs
-npm-debug.log
-yarn-error.log
+# Build output
+build
+dist
